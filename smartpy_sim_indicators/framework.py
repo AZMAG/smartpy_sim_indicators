@@ -4,6 +4,8 @@ import gc
 import numpy as np
 import pandas as pd
 import orca
+
+
 from smartpy_core.wrangling import broadcast
 
 
@@ -259,8 +261,12 @@ def get_indicators(h5,
         List of years to process.
     tables: list
         List of tables to load from the h5.
-    by: str or list of str:
-        Column(s) to aggregate by
+    by: str, list of str, or dict:
+        Column(s) to aggregate by.
+        If a dict is provided, aggregtions across multiple groupings
+        will be generated. The provided dict should be keyed by some name
+        will values indicating the colums(s) to group by. The resulting
+        dict will then be dict of dicts containing data frames.
     agg_func: func
         The aggration/indicator function to apply. Should accept
         'by' as the input argument.
@@ -282,12 +288,19 @@ def get_indicators(h5,
 
         # load tables and register w/ orca
         if y == base_year:
-            load_tables(sim_h5, 'base', tabs_to_process)
+            load_tables(h5, 'base', tables)
         else:
-            load_tables(sim_h5, y, tabs_to_process)
+            load_tables(h5, y, tables)
 
         # get summary results
-        to_concat[y] = agg_func(by, **agg_kwargs)
+        if not isinstance(by, dict):
+            to_concat[y] = agg_func(by, **agg_kwargs)
+        else:
+            # need to compute indicators across multiple groups
+            for k, v in by.items():
+                if k not in to_concat:
+                    to_concat[k] = {}
+                to_concat[k][y] = agg_func(v, **agg_kwargs)
 
     return to_concat
 
@@ -313,7 +326,7 @@ def compile_to_cols(to_concat, collapse_col_idx=True, collapse_row_idx=True):
     pandas.DataFrame
 
     """
-    c = pd.concat(to_concat, axis=1)
+    c = pd.concat(to_concat, axis=1).fillna(0)
 
     # collapse multi columns into a single column
     # note this assumes there's only two levels
@@ -360,4 +373,3 @@ def compile_to_rows(to_concat, collapse_row_idx=False):
         c.set_index(grp_levels, inplace=True)
 
     return c
-
