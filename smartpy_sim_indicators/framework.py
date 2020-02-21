@@ -1,5 +1,6 @@
 from __future__ import division, print_function
 
+import gc
 import numpy as np
 import pandas as pd
 import orca
@@ -234,3 +235,129 @@ def list_store_tables(h5, year, full=False):
             tables = [t.split('/')[-1] for t in tables]
 
     return tables
+
+
+#################################################
+# FOR GENERATING INDICATORS
+##################################################
+
+
+def get_indicators(h5,
+                   years,
+                   tables,
+                   by,
+                   agg_func,
+                   **agg_kwargs):
+    """
+    Generates indicators (summary attributes).
+
+    Parameters:
+    -----------
+    h5: str
+        Full path to the h5 file containing the data to summarize.
+    years: list
+        List of years to process.
+    tables: list
+        List of tables to load from the h5.
+    by: str or list of str:
+        Column(s) to aggregate by
+    agg_func: func
+        The aggration/indicator function to apply. Should accept
+        'by' as the input argument.
+    **agg_kwargs: kwarg dict
+        Additional arguments to pass to the aggregation function.
+
+    Returns:
+    --------
+    dict of pandas.DataFrame, keyed by year
+
+    """
+    base_year = orca.get_injectable('base_year')
+    to_concat= {}
+
+    # get summaries for all years
+    for y in years:
+        print('on year: {}...'.format(y))
+        gc.collect()
+
+        # load tables and register w/ orca
+        if y == base_year:
+            load_tables(sim_h5, 'base', tabs_to_process)
+        else:
+            load_tables(sim_h5, y, tabs_to_process)
+
+        # get summary results
+        to_concat[y] = agg_func(by, **agg_kwargs)
+
+    return to_concat
+
+
+def compile_to_cols(to_concat, collapse_col_idx=True, collapse_row_idx=True):
+    """
+    Take a dictionary of data frames and concat colum-wise
+    so there is a column for every column/year combination.
+
+    Parameters:
+    -----------
+    to_concat: dict of pandas.DataFrames
+        The data frames to compile
+    collapse_col_idx: bool, optional, default True
+        If True, combines multi-columns so that the resulting
+        columns names are <level2>_<level1>, e.g. pop_2020
+    collaspe_row_idx: bool, optional, default True
+        If True, and the dataframe has a multi-index, sends the index
+        levels to columns and generates a new index.
+
+    Returns:
+    --------
+    pandas.DataFrame
+
+    """
+    c = pd.concat(to_concat, axis=1)
+
+    # collapse multi columns into a single column
+    # note this assumes there's only two levels
+    if collapse_col_idx:
+        z = zip(
+                c.columns.get_level_values(0),
+                c.columns.get_level_values(1),
+            )
+
+        c.columns = ['{}{}{}'.format(y, '_', x) for x, y in z]
+
+    # collapse multi-index rows
+    if collapse_row_idx and c.index.nlevels > 1:
+        col_names = list(c.index.names)
+        c.reset_index(inplace=True)
+        c.index
+    return c
+
+
+def compile_to_rows(to_concat, collapse_row_idx=False):
+    """
+    Take a dictionary of data frames and concat row-wise
+    so there is a row for every year, group combination.
+
+    Parameters:
+    -----------
+    to_concat: dict of pandas.DataFrames
+        The data frames to compile
+    collaspe_row_idx: bool, optional, default True
+        If True, and the dataframe has a multi-index, sends the index
+        levels to columns and generates a new index.
+
+    Returns:
+    --------
+    pandas.DataFrame
+
+    """
+    c = pd.concat(to_concat)
+    grp_levels = list(c.index.names[1:])
+    c.index.names = ['year'] + grp_levels
+    c.reset_index(inplace=True)
+
+    if not collapse_row_idx or len(grp_levels) == 1:
+        c.set_index(grp_levels, inplace=True)
+
+    return c
+
